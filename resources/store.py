@@ -1,37 +1,48 @@
-from flask_restful import Resource
-from models.store import StoreModel
+from flask.views import MethodView
+from flask_smorest import Blueprint, abort
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+
+from db import db
+from models import StoreModel
+from schemas import StoreSchema
 
 
-class Store(Resource):
-    def get(self, name):
-        store = StoreModel.find_by_name(name)
-        if store:
-            return store.json()
-        return {"message": "Store not found."}, 404
-
-    def post(self, name):
-        if StoreModel.find_by_name(name):
-            return (
-                {"message": "A store with name '{}' already exists.".format(name)},
-                400,
-            )
-
-        store = StoreModel(name)
-        try:
-            store.save_to_db()
-        except:
-            return {"message": "An error occurred while creating the store."}, 500
-
-        return store.json(), 201
-
-    def delete(self, name):
-        store = StoreModel.find_by_name(name)
-        if store:
-            store.delete_from_db()
-
-        return {"message": "Store deleted."}
+blp = Blueprint("Stores", "stores", description="Operations on stores")
 
 
-class StoreList(Resource):
+@blp.route("/store/<string:store_id>")
+class Store(MethodView):
+    @blp.response(200, StoreSchema)
+    def get(self, store_id):
+        store = StoreModel.query.get_or_404(store_id)
+        return store
+
+    def delete(self, store_id):
+        store = StoreModel.query.get_or_404(store_id)
+        db.session.delete(store)
+        db.session.commit()
+        return {"message": "Store deleted"}, 200
+
+
+@blp.route("/store")
+class StoreList(MethodView):
+    @blp.response(200, StoreSchema(many=True))
     def get(self):
-        return {"stores": [x.json() for x in StoreModel.find_all()]}
+        return StoreModel.query.all()
+
+    @blp.arguments(StoreSchema)
+    @blp.response(201, StoreSchema)
+    def post(self, store_data):
+        store = StoreModel(**store_data)
+        try:
+            db.session.add(store)
+            db.session.commit()
+        except IntegrityError:
+            abort(
+                400,
+                message="A store with that name already exists.",
+            )
+        except SQLAlchemyError:
+            abort(500, message="An error occurred creating the store.")
+
+        return store
